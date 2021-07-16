@@ -26,7 +26,8 @@ jobs:
       - uses: actions/checkout@v2
 
       - name: ansible-lint
-        uses: ansible/ansible-lint-action@v4.1.0.post0
+        # https://github.com/ansible/ansible-lint-action/issues/38
+        uses: ansible/ansible-lint-action@master
         with:
          targets: |
            stackable.yml
