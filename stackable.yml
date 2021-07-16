@@ -1,0 +1,134 @@
+---
+- name: Configure hostnames
+  hosts: all
+  become: true
+  tasks:
+    - ansible.builtin.hostname:
+        name: "{{ inventory_hostname }}"
+
+- name: Configure master
+  hosts: groupmaster
+  become: false
+  tasks:
+    - ansible.builtin.stat:
+        path: /etc/rancher
+      register: k3s_installed
+
+    # or we could try https://registry.terraform.io/modules/xunleii/k3s/module/latest ?
+    - ansible.builtin.command:
+        argv:
+          - "k3sup"
+          - "install"
+          - "--user"
+          - "{{ ansible_user }}"
+          - "--ip"
+          - "{{ ansible_host }}"
+      delegate_to: localhost
+      when: not k3s_installed.stat.exists
+
+    # We apply via dropping manifests in the k3s folder, so no need to
+    # use ansible k8s task yet
+
+    # - name: install ansible kubernetes dependencies dependencies
+    #   ansible.builtin.apt:
+    #     name: python3-pip
+    #     state: present
+    #     update_cache: yes
+    #     cache_valid_time: 3600
+    #   become: true
+
+    # - name: install ansible kubernetes dependencies
+    #   ansible.builtin.pip:
+    #     name: openshift
+    #   become: true
+
+    - name: apply manifests
+      copy:
+        src: "{{ item }}"
+        dest: /var/lib/rancher/k3s/server/manifests/
+      loop:
+        - k8s-manifests/stackablecrd.yaml
+        - k8s-manifests/stackablerepo.yaml
+      become: true
+
+    # TODO wait until they are applied?
+
+    # - name: k8s deployments
+    #   kubernetes.core.k8s:
+    #     state: present
+    #     kubeconfig: /etc/rancher/k3s/k3s.yaml
+    #     definition: "{{ lookup('file', item) | from_yaml }}"
+    #   become: true # to read k3s.yaml
+    #   loop:
+    #     - 'stackablecrd.yaml'
+    #     - 'stackablerepo.yaml'
+
+# Some of our workers will get kubelet
+- name: Configure workers
+  hosts: groupworkers[0:1]
+  become: false
+  tasks:
+    - ansible.builtin.stat:
+        path: /etc/rancher
+      register: k3s_installed
+
+    - ansible.builtin.command:
+        argv:
+          - "k3sup"
+          - "join"
+          - "--user"
+          - "{{ ansible_user }}"
+          - "--server-ip"
+          - "{{ hostvars[groups['groupmaster'][0]].ansible_host }}"
+          - "--ip"
+          - "{{ ansible_host }}"
+      delegate_to: localhost
+      when: not k3s_installed.stat.exists
+
+# And the others will get stackable-agent
+# https://docs.stackable.tech/home/index.html
+- name: Configure stackable deb repo
+  hosts: groupworkers[2:3]
+  become: true
+  tasks:
+    - name: Add an apt key by id from a keyserver
+      ansible.builtin.apt_key:
+        keyserver: keyserver.ubuntu.com
+        id: 16dd12f5c7a6d76a
+
+    - name: Add repos into sources list
+      ansible.builtin.apt_repository:
+        repo: "deb https://repo.stackable.tech/repository/deb-dev buster main"
+        state: present
+
+    - file:
+        path: /root/.kube
+        state: directory
+
+    # TODO is this the right thing to do? Saves setting KUBECONFIG env variable
+    - copy:
+        src: kubeconfig
+        dest: /root/.kube/config
+        # TODO mode
+
+    - name: Install packages
+      ansible.builtin.apt:
+        name: "{{ item }}"
+        state: latest
+      loop:
+        - stackable-agent
+        - stackable-hdfs-operator-server
+        - stackable-kafka-operator-server
+        - stackable-nifi-operator-server
+        - stackable-opa-operator-server
+        - stackable-regorule-operator-server
+        - stackable-spark-operator-server
+        - stackable-zookeeper-operator-server
+
+    # TODO only when newly installed?
+    - name: Start stackable-agent
+      ansible.builtin.systemd:
+        name: stackable-agent
+        state: restarted
+        daemon-reload: true
+        enabled: true

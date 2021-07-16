@@ -1,0 +1,7 @@
+[groupmaster]
+master ansible_host=${master_ip} ansible_user=ubuntu
+
+[groupworkers]
+%{ for index, ip in workers_ips ~}
+worker-${index} ansible_host=${ip} ansible_user=ubuntu
+%{ endfor ~}

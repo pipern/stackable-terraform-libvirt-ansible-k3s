@@ -1,0 +1,7 @@
+generated-inventory.yml
+kubeconfig
+ssh.sh
+*.tfstate
+*.tfstate.backup
+.terraform*
+.ansible-venv
